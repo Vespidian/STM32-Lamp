@@ -1,0 +1,23 @@
+{
+	"folders": [
+		{
+			"path": "."
+		}
+	],
+	"settings": {
+		"files.associations": {
+			"rcc.h": "c",
+			"stdlib.h": "c",
+			"usart.h": "c",
+			"cstdint": "c",
+			"rtc.h": "c",
+			"systick.h": "c",
+			"stdbool.h": "c",
+			"global.h": "c",
+			"utility.h": "c",
+			"adc.h": "c",
+			"pwr.h": "c",
+			"timer.h": "c"
+		}
+	}
+}
