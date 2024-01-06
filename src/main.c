@@ -73,8 +73,8 @@ static void adc_setup(void){
 
 	adc_power_on(ADC1);
 
-	// Wait for ADC starting up (100 ms)
-	for (int i = 0; i < 800000; i++){
+	// Wait for ADC starting up (10 ms)
+	for (int i = 0; i < 80000; i++){
 		__asm__("nop");
 	}
 
@@ -138,10 +138,24 @@ void rtc_isr(void){
 }
 
 /** --- LAMP VARIABLES --- **/
+const uint16_t LAMP_MAX_BRIGHTNESS = 0;
+
+// PWM period is 4096, so having the output compare 
+// value be 4096 makes the duty cycle be 0%
+const uint16_t LAMP_MIN_BRIGHTNESS = 4096;
+
 bool lamp_on = false;
 bool previous_button_state = false;
 bool button_state = false;
 uint16_t pot_val = 0;
+
+bool is_fading = false;
+uint16_t fade_start_val = 0;
+uint16_t fade_end_val = 0;
+uint16_t fade_current_val = 0;
+uint8_t fade_count = 0;
+
+uint16_t loop_counter = 0;
 
 int main(void)
 {
@@ -190,33 +204,25 @@ int main(void)
 				timer_set_oc_value(TIM1, TIM_OC1, pot_val);
 
 				// Check if the button was pressed (rising edge)
+				// TURNING OFF
 				if(button_state == true && previous_button_state == false){
 					lamp_on = false;
 
-					// Disable pwm timer
-					timer_disable_counter(TIM1);
+					if(is_fading){ // Change fade direction if currently turning on
+						fade_start_val = fade_current_val;
+						fade_end_val = LAMP_MIN_BRIGHTNESS;
+					}else{ // Start fading
+						is_fading = true;
+						fade_start_val = pot_val;
+						fade_end_val = LAMP_MIN_BRIGHTNESS;
 
-					// Make sure the pwm pin is low
-					gpio_set_mode(GPIOA, GPIO_MODE_OUTPUT_10_MHZ, GPIO_CNF_OUTPUT_PUSHPULL, GPIO8);
-					gpio_clear(GPIOA, GPIO8);
-					
-					// Set led enable pin low
-					gpio_clear(GPIOA, GPIO11);
-
-					// Set the brightness value to zero so we dont 
-					// get blinded when turning it on
-					//
-					// PWM period is 4096, so having the output compare 
-					// value be 4095 makes duty cycle = 0%
-					pot_val = 4095;
-					timer_set_oc_value(TIM1, TIM_OC1, pot_val);
-
-					// Turn off the ADC to conserve power
-					adc_power_off(ADC1);
-
+						// Turn off the ADC to conserve power
+						adc_power_off(ADC1);
+					}
 				}
 			}else{
 				// Check if the button was pressed (rising edge)
+				// TURNING ON
 				if(button_state == true && previous_button_state == false){
 					lamp_on = true;
 
@@ -232,10 +238,59 @@ int main(void)
 					// Set led enable pin high
 					gpio_set(GPIOA, GPIO11);
 
+
+					if(is_fading){ // Change fade direction if currently turning off
+						fade_start_val = fade_current_val;
+						fade_end_val = pot_val;
+					}else{ // Start Fading
+
+						// Get a sample of the potentiometer to know the final brightness
+						adc_start_conversion_direct(ADC1);
+						while (!(ADC_SR(ADC1) & ADC_SR_EOC));
+
+						pot_val = ADC_DR(ADC1);
+
+						is_fading = true;
+						fade_start_val = LAMP_MIN_BRIGHTNESS;
+						fade_end_val = pot_val;
+					}
 				}
 			}
 			// Store the button state for next loop
 			previous_button_state = button_state;
+
+			if(is_fading){
+				
+				// Set the PWM duty cycle from the sine of the fade value
+				fade_current_val = map(custom_sin(fade_count * 2 + 64), 32767, -32767, fade_start_val, fade_end_val);
+				timer_set_oc_value(TIM1, TIM_OC1, fade_current_val);
+
+				fade_count++;
+				if(fade_count == 64){
+					is_fading = false;
+					fade_count = 0;
+					if(lamp_on){
+						
+					}else{
+						// Disable pwm timer
+						timer_disable_counter(TIM1);
+
+						// Make sure the pwm pin is low
+						gpio_set_mode(GPIOA, GPIO_MODE_OUTPUT_10_MHZ, GPIO_CNF_OUTPUT_PUSHPULL, GPIO8);
+						gpio_clear(GPIOA, GPIO8);
+						
+						// Set led enable pin low
+						gpio_clear(GPIOA, GPIO11);
+
+						// Set the brightness value to zero so we dont 
+						// get blinded when turning it on
+						pot_val = LAMP_MIN_BRIGHTNESS;
+						timer_set_oc_value(TIM1, TIM_OC1, pot_val);
+					}
+				}
+			}
+
+			loop_counter++;
 		}
 	}
 
