@@ -144,16 +144,46 @@ const uint16_t LAMP_MAX_BRIGHTNESS = 0;
 // value be 4096 makes the duty cycle be 0%
 const uint16_t LAMP_MIN_BRIGHTNESS = 4096;
 
+// Lamp state
 bool lamp_on = false;
 bool previous_button_state = false;
 bool button_state = false;
 uint16_t pot_val = 0;
 
+// Fading
 bool is_fading = false;
 uint16_t fade_start_val = 0;
 uint16_t fade_end_val = 0;
 uint16_t fade_current_val = 0;
 uint8_t fade_count = 0;
+
+// Time tracking
+const uint32_t DAY_LENGTH = 86400;
+
+// The RTC counter register is 32-bits, so conceivably 
+// this could count days for 136 years continuously
+
+/**
+ * Alarmless day:
+ * - Set alarm for RTC_CNT + DAY_LENGTH
+ * 
+ * Alarmed day:
+ * - Set alarm for RTC_CNT + alarms[current_day]
+ * - Set alarm for RTC_CNT + (DAY_LENGTH - alarms[current_day])
+ * - Fade light on over 'sunrise_time'
+ * 		- map time from (0, sunrise_time) to (0, 128) for fitting the sine curve
+ * - Keep light on for 'sunrise_time'
+ * - Fade light off over 'sunrise_time'
+*/
+
+/**
+ * Alarm Times:
+ * Zero means light will not turn on
+ * Order: Mon Tue Wed Thr Fri Sat Sun
+*/
+uint32_t alarms[7] = {18000, 0, 0, 18000, 0, 0, 0};
+uint16_t current_day = 0;
+uint32_t sunrise_time = 3600; // Fade in over the course of 1 hour
 
 uint16_t loop_counter = 0;
 
@@ -178,9 +208,12 @@ int main(void)
 	*/
 
 	gpio_set_mode(GPIOA, GPIO_MODE_INPUT, GPIO_CNF_INPUT_ANALOG, GPIO1);
-	gpio_set_mode(GPIOA, GPIO_MODE_INPUT, GPIO_CNF_INPUT_FLOAT, GPIO5);
+	gpio_set_mode(GPIOA, GPIO_MODE_INPUT, GPIO_CNF_INPUT_PULL_UPDOWN, GPIO5);
 	gpio_set_mode(GPIOA, GPIO_MODE_OUTPUT_10_MHZ, GPIO_CNF_OUTPUT_ALTFN_PUSHPULL, GPIO8);
 	gpio_set_mode(GPIOA, GPIO_MODE_OUTPUT_10_MHZ, GPIO_CNF_OUTPUT_PUSHPULL, GPIO11);
+
+	// Set PA5 to pulldown
+	GPIO_ODR(GPIOA) &= ~(1 << 5);
 
 	// Off by default
 	timer_disable_counter(TIM1);
