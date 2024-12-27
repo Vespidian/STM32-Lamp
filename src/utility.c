@@ -47,3 +47,10 @@ int16_t custom_sin(uint8_t x){
 long map(long x, long in_min, long in_max, long out_min, long out_max) {
   return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
 }
+
+unsigned char reverse_bin(unsigned char b){
+   b = (b & 0b11110000) >> 4 | (b & 0b00001111) << 4;
+   b = (b & 0b11001100) >> 2 | (b & 0b00110011) << 2;
+   b = (b & 0b10101010) >> 1 | (b & 0b01010101) << 1;
+   return b;
+}

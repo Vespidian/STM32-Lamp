@@ -17,7 +17,11 @@
 			"utility.h": "c",
 			"adc.h": "c",
 			"pwr.h": "c",
-			"timer.h": "c"
+			"timer.h": "c",
+			"compare": "cpp",
+			"terminal.h": "c",
+			"bkp.h": "c",
+			"gpio.h": "c"
 		}
 	}
 }

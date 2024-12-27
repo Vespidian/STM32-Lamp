@@ -5,7 +5,10 @@
 #include "usart.h"
 #include "utility.h"
 
+#include "lamp.h"
+
 #include <libopencm3/stm32/rtc.h>
+#include <libopencm3/stm32/f1/bkp.h>
 
 // #include "stm32f103xb.h"
 
@@ -20,16 +23,22 @@ uint8_t command_buffer_index;
 char previous_char;
 
 void FuncHelp(const char *command_buffer);
+void FuncReset(const char *command_buffer);
 void FuncRegister(const char *command_buffer);
+void FuncTransmit(const char *command_buffer);
 void FuncTime(const char *command_buffer);
+void FuncSet(const char *command_buffer);
 void FuncAlarm(const char *command_buffer);
 void FuncPing(const char *command_buffer);
 
 
 const char *command_list[] = {
 	"help",
+	"reset",
 	"reg",
+	"transmit",
 	"time",
+	"set",
 	"alarm",
 	"ping",
 	NULL
@@ -37,8 +46,11 @@ const char *command_list[] = {
 
 CommandFunction function_list[] = {
 	FuncHelp,
+	FuncReset,
 	FuncRegister,
+	FuncTransmit,
 	FuncTime,
+	FuncSet,
 	FuncAlarm,
 	FuncPing,
 	NULL
@@ -167,52 +179,11 @@ unsigned int HexStrToInt(const char *hex, char delimiter){
 }
 
 void GetCommand(){
-	// for(uint8_t i = usart_buffer_rx_head, buffer_index = 0; (i != usart_buffer_rx_tail) && (USART1_buffer_rx[i] != '\n'); i++, buffer_index++){
-	// 	command_buffer[buffer_index] = USART1_buffer_rx[i];
-	// }
-	// if(previous_char != '\n' && previous_char != '\r'){
 	if(command_buffer_index != 0){
 
 		command_buffer[command_buffer_index] = 0;
 		command_buffer_index = 0;
 
-		// switch(FindCommand(command_buffer)){
-		// 	case 0: // help
-		// 		USARTWrite("The following commands are currently defined:\n\n");
-		// 		for(int i = 0; command_list[i] != NULL; i++){
-		// 			USARTWrite(command_list[i]);
-		// 			USARTWrite(" ");
-		// 		}
-		// 		USARTWrite("\n");
-		// 		break;
-		// 	case 1: // time
-		// 		USARTWriteInt(RTCGetTime());
-		// 		break;
-		// 	case 2: // time_set
-		// 		RTCSetCounter(StrToInt(FindChar(command_buffer, ' ') + 1, ' '));
-		// 		break;
-		// 	case 3: // alarm
-		// 		USARTWriteInt(RTCGetAlarm());
-		// 		break;
-		// 	case 4: // alarm_set
-		// 		RTCSetAlarm(StrToInt(FindChar(command_buffer, ' ') + 1, ' '));
-		// 		break;
-		// 	case 5: // ping
-		// 		for(int i = 0; i < StrToInt(FindChar(command_buffer, ' ') + 1, ' '); i++){
-		// 			USARTWrite("pong\n");
-		// 		}
-		// 		break;
-
-
-		// 	case -1:
-		// 		USARTWrite(command_buffer);
-		// 		USARTWrite(": command not found");
-		// 		break;
-		// 	default: // Command is found but calling it does nothing
-		// 		USARTWrite(command_buffer);
-		// 		USARTWrite(": command not implemented");
-		// 		break;
-		// }
 		unsigned int function_id = FindCommand(command_buffer);
 		if(function_id == -1){
 			USARTWrite(command_buffer);
@@ -278,6 +249,10 @@ void FuncHelp(const char *command_buffer){
 	USARTWrite("\n");
 }
 
+extern void reset_handler(void);
+void FuncReset(const char *command_buffer){
+	reset_handler();
+}
 
 void FuncRegister(const char *command_buffer){
 	if(StringCompare(FindChar(command_buffer, ' ') + 1, "set", ' ')){
@@ -298,29 +273,220 @@ void FuncRegister(const char *command_buffer){
 
 }
 
+#include "ir.h"
+void FuncTransmit(const char *command_buffer){
+	char *dat = FindChar(command_buffer, ' ') + 1;
+	uint8_t dat_len = StringLength(dat, '\n');
+
+
+	while(ir_state != IR_STATE_CTS);
+	
+	uint8_t crc = 0;
+	IRSendPacket(0x0001, 0x02); // STX (start of text) (initializing terminal mode)
+	while(ir_state != IR_STATE_CTS);
+	for(int i = 0; i < dat_len; i++){
+		crc ^= dat[i];
+		IRSendPacket(0x0001, dat[i]);
+		while(ir_state != IR_STATE_CTS);
+	}
+
+	IRSendPacket(0x0001, crc); // CRC
+	while(ir_state != IR_STATE_CTS);
+	
+	IRSendPacket(0x0001, 0x03); // ETX (end of text)
+
+}
+
+extern const uint32_t DAY_LENGTH;
+uint32_t RTCCalculateSeconds(uint32_t day, uint32_t hour, uint32_t minute, uint32_t second){
+	return day * DAY_LENGTH + hour * 3600 + minute * 60 + second;
+}
+void RTCCalculateTime(uint32_t *second, uint32_t *day, uint32_t *hour, uint32_t *minute){
+	*day = *second / DAY_LENGTH;
+	*second -= (*second / DAY_LENGTH * DAY_LENGTH);
+	*hour = *second / 3600;
+	*second -= (*hour * 3600);
+	*minute = *second / 60;
+	*second -= *minute * 60;
+}
+
 void FuncTime(const char *command_buffer){
-	if(StringCompare(command_buffer = (FindChar(command_buffer, ' ') + 1), "set", ' ')){
+	const char *param = FindChar(command_buffer, ' ') + 1;
+	if(StringCompare(param, "set", ' ')){
 		// Set
-		// RTCSetCounter(StrToInt(FindChar(command_buffer, ' ') + 1, ' '));
-		rtc_set_counter_val(StrToInt(FindChar(command_buffer, ' ') + 1, ' '));
-		USARTWriteInt(rtc_get_counter_val());
+		if(CountChars(param, ' ') == 4){
+			uint32_t day, hour, minute, second;
+			day = StrToInt(param = (FindChar(param, ' ') + 1), ' ');
+			hour = StrToInt(param = (FindChar(param, ' ') + 1), ' ');
+			minute = StrToInt(param = (FindChar(param, ' ') + 1), ' ');
+			second = StrToInt(param = (FindChar(param, ' ') + 1), ' ');
+			rtc_set_counter_val(RTCCalculateSeconds(day, hour, minute, second));
+			USARTWriteInt(rtc_get_counter_val());
+
+		}else{
+			USARTWrite("time set: invalid usage\n	time set [day] [hour] [minute] [second]\n");
+
+		}
 	}else{
-		// Get
-		// USARTWriteInt(RTCGetTime());
+		uint32_t day, hour, minute, second = rtc_get_counter_val();
+		RTCCalculateTime(&second, &day, &hour, &minute);
+
 		USARTWriteInt(rtc_get_counter_val());
+		USARTWrite("\nCurrent time:\n");
+		switch(day % 7){
+			case 0:
+				USARTWrite("Mon");
+				break;
+			case 1:
+				USARTWrite("Tue");
+				break;
+			case 2:
+				USARTWrite("Wed");
+				break;
+			case 3:
+				USARTWrite("Thr");
+				break;
+			case 4:
+				USARTWrite("Fri");
+				break;
+			case 5:
+				USARTWrite("Sat");
+				break;
+			case 6:
+				USARTWrite("Sun");
+				break;
+		}
+		USARTWrite(" - ");
+		USARTWriteInt(hour);
+		USARTWrite(":");
+		USARTWriteInt(minute);
+		USARTWrite(":");
+		USARTWriteInt(second);
+
+		USARTWrite("\nUptime: ");
+		USARTWriteInt(day);
+		USARTWrite(" days");
+
+		USARTWriteByte('\n');
+
 	}
 }
 
+extern bool alarm_set;
+void FuncSet(const char *command_buffer){
+	if(StringCompare(FindChar(command_buffer, ' ') + 1, "true", ' ')){
+		alarm_set = true;
+	}else{ // false
+		alarm_set = false;
+	}
+	USARTWrite("alarm_set state: ");
+	USARTWriteInt(alarm_set);
+	USARTWriteByte('\n');
+}
+
 void FuncAlarm(const char *command_buffer){
-	if(StringCompare(command_buffer = (FindChar(command_buffer, ' ') + 1), "set", ' ')){
+	const char *param = FindChar(command_buffer, ' ') + 1;
+	if(StringCompare(param, "set", ' ')){
 		// Set
-		// RTCSetAlarm(StrToInt(FindChar(command_buffer, ' ') + 1, ' '));
-		rtc_set_alarm_time(StrToInt(FindChar(command_buffer, ' ') + 1, ' '));
-		USARTWriteInt(rtc_get_alarm_val());
+		uint8_t num_params = CountChars(param, ' ');
+		if((num_params > 1) && (num_params <= 4)){
+			uint32_t day, hour, minute, second;
+			day = StrToInt(param = (FindChar(param, ' ') + 1), ' ');
+			hour = StrToInt(param = (FindChar(param, ' ') + 1), ' ');
+			minute = StrToInt(param = (FindChar(param, ' ') + 1), ' ');
+			second = StrToInt(param = (FindChar(param, ' ') + 1), ' ');
+			// USARTWriteInt(rtc_get_alarm_val());
+			alarms[day % 7] = RTCCalculateSeconds(0, hour, minute, second);
+
+			*(uint16_t *)(0x40006c04 + ((day % 7) * 0x04)) = alarms[day % 7] / 60;
+
+			if((day % 7) == ((rtc_get_counter_val() % DAY_LENGTH) % 7)){
+				rtc_set_alarm_time(RTCCalculateSeconds(rtc_get_counter_val() % DAY_LENGTH, hour, minute, second));
+			}
+
+		}else{
+			USARTWrite("alarm set: invalid usage\n	time set <day of week> [hour] [minute] [second]\n");
+
+		}
 	}else{
 		// Get
-		// USARTWriteInt(RTCGetAlarm());
+		uint32_t day, hour, minute, second = rtc_get_alarm_val();
+		RTCCalculateTime(&second, &day, &hour, &minute);
+
+		// Display the currently set alarm (waiting to trigger)
 		USARTWriteInt(rtc_get_alarm_val());
+		USARTWrite("\nAlarm set for:\n");
+		switch(day % 7){
+			case 0:
+				USARTWrite("Mon");
+				break;
+			case 1:
+				USARTWrite("Tue");
+				break;
+			case 2:
+				USARTWrite("Wed");
+				break;
+			case 3:
+				USARTWrite("Thr");
+				break;
+			case 4:
+				USARTWrite("Fri");
+				break;
+			case 5:
+				USARTWrite("Sat");
+				break;
+			case 6:
+				USARTWrite("Sun");
+				break;
+		}
+		USARTWrite(" - ");
+		USARTWriteInt(hour);
+		USARTWrite(":");
+		USARTWriteInt(minute);
+		USARTWrite(":");
+		USARTWriteInt(second);
+
+		USARTWriteByte('\n');
+
+
+		// Display alarms for each day of the week
+		USARTWrite("\nAlarms:\n");
+		for(int i = 0; i < 7; i++){
+			second = alarms[i];
+			RTCCalculateTime(&second, &day, &hour, &minute);
+			switch(i){
+				case 0:
+					USARTWrite("Mon");
+					break;
+				case 1:
+					USARTWrite("Tue");
+					break;
+				case 2:
+					USARTWrite("Wed");
+					break;
+				case 3:
+					USARTWrite("Thr");
+					break;
+				case 4:
+					USARTWrite("Fri");
+					break;
+				case 5:
+					USARTWrite("Sat");
+					break;
+				case 6:
+					USARTWrite("Sun");
+					break;
+			}
+			USARTWrite(" - ");
+			USARTWriteInt(hour);
+			USARTWrite(":");
+			USARTWriteInt(minute);
+			USARTWrite(":");
+			USARTWriteInt(second);
+			USARTWrite("\n");
+
+		}
+		USARTWriteByte('\n');
 	}
 }
 
@@ -329,3 +495,6 @@ void FuncPing(const char *command_buffer){
 		USARTWrite("pong\n");
 	}
 }
+
+
+

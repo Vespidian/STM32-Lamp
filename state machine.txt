@@ -1,0 +1,38 @@
+Inputs
+- Button
+- Potentiometer
+- IR sensor
+- RTC alarm
+
+Outputs
+- LED Enable
+- LED dim
+- IR transmitter
+
+
+States
+- LED
+	- on
+	- off
+	- fading on
+	- fading off
+		fading on and off have variable times
+
+- RTC
+	- counting
+		alarm can be enabled or disabled
+		disabled means it triggers at midnight
+
+- IR
+	if counter is approx 1.1ms, bit is 0
+	if counter is approx 2.2ms, bit is 1
+	if counter is anything else, new packet
+	if bit_counter is 32, packet is done, go to wait state
+
+	wait state goes to read bit on falling edge
+	wait state exits receive after 45ms
+
+	CTS goes to receive on falling edge
+
+
+

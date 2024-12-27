@@ -159,13 +159,16 @@ void USARTWriteInt(uint32_t num){
 }
 
 void USARTWriteHex(uint8_t num){
-	char str[4] = "0x00";
+	// char str[4] = "0x00";
+	char str[2] = "00";
 
 	uint8_t val = (num >> 4);
-	str[2] = ((val > 9) ? (val + 'A' - 10) : (val + '0'));
+	// str[2] = ((val > 9) ? (val + 'A' - 10) : (val + '0'));
+	str[0] = ((val > 9) ? (val + 'A' - 10) : (val + '0'));
 	
 	val = (num & 0x0f);
-	str[3] = ((val > 9) ? (val + 'A' - 10) : (val + '0'));
+	// str[3] = ((val > 9) ? (val + 'A' - 10) : (val + '0'));
+	str[1] = ((val > 9) ? (val + 'A' - 10) : (val + '0'));
 
 	USARTWrite(str);
 }
